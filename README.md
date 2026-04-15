@@ -1,207 +1,279 @@
-# 🔐 SDN-Based Firewall using POX Controller
+# SDN Firewall Using POX and Mininet
 
-## 📌 Overview
-This project implements a Software Defined Networking (SDN) based firewall using the POX controller and Mininet. The firewall inspects traffic at the controller level and dynamically installs flow rules in the switch to allow or block communication between hosts.
+## Overview
+This project implements a Software Defined Networking firewall using the POX controller, Mininet, and Open vSwitch. The controller acts as a learning switch for normal traffic, but it also enforces a specific IPv4 access-control rule that blocks communication from one host to another.
 
-The project demonstrates how centralized control in SDN enables flexible and programmable network security.
+The main idea is simple: when a packet reaches the switch and no flow rule matches it, the switch sends the packet to the controller as a PacketIn event. The controller inspects the packet, decides whether it should be forwarded or dropped, and then installs a flow rule so later packets are handled directly by the switch.
 
----
+## Project Goal
+The goal of the project is to demonstrate how a centralized SDN controller can enforce a network policy without changing the hosts or the switch manually.
 
-## 🎯 Objective
-The objectives of this project are:
-- To block communication between specific hosts using IP-based filtering
-- To allow normal communication between other hosts
-- To demonstrate dynamic flow rule installation
-- To implement match–action logic using OpenFlow
-- To log blocked traffic for monitoring
+The implementation demonstrates:
 
----
+- MAC learning at the controller
+- IPv4-based filtering
+- Dynamic OpenFlow rule installation
+- Controller-side logging of blocked traffic
+- Normal forwarding for allowed traffic
+- Performance validation using ping and iperf
 
-## 🏗️ Network Topology
-
-The network consists of:
-- 1 Switch (s1)
-- 3 Hosts (h1, h2, h3)
-
-### IP Addressing
+## Topology
+The lab uses a single-switch, three-host topology.
 
 | Host | IP Address |
-|------|-----------|
-| h1   | 10.0.0.1  |
-| h2   | 10.0.0.2  |
-| h3   | 10.0.0.3  |
+| ---- | ---------- |
+| h1   | 10.0.0.1   |
+| h2   | 10.0.0.2   |
+| h3   | 10.0.0.3   |
 
-This simple topology ensures clear observation of firewall behavior without additional routing complexity.
+### Why this topology
+A single switch keeps the experiment focused on firewall behavior instead of routing. It makes the controller logic easier to observe, and it clearly separates blocked traffic from allowed traffic in a small, repeatable test environment.
 
-### Topology Justification
-A single-switch topology is used to simplify the network design and eliminate routing complexity. This allows clear visualization of controller–switch interaction and makes it easier to demonstrate firewall behavior such as blocking and allowing traffic without interference from multi-hop paths.
+## Firewall Policy
+The policy enforced by the controller is:
 
----
+- Block: 10.0.0.1 -> 10.0.0.2
+- Allow: all other traffic
 
-## ⚙️ Setup Instructions
+This means the controller only filters one IPv4 pair. ARP traffic and other non-blocked packets are still permitted so that normal host communication can proceed.
 
-### 1. Install Dependencies
-sudo apt update  
-sudo apt install mininet git -y  
+## Controller Design
+The controller is implemented in [firewall.py](firewall.py). It follows two responsibilities at the same time:
 
-### 2. Clone POX Controller
-git clone https://github.com/noxrepo/pox.git  
-cd pox  
+1. Learn the location of hosts by storing MAC-to-port mappings.
+2. Enforce the firewall rule before installing forwarding entries.
 
----
+### PacketIn handling
+PacketIn is the main event that drives the controller logic.
 
-## ▶️ Execution Steps
+When the switch receives a packet that does not match an existing flow entry, it forwards that packet to the controller. The controller then:
 
-### Step 1: Start POX Controller
-cd ~/pox  
-./pox.py log.level --DEBUG firewall  
+1. Reads the parsed Ethernet frame from the event.
+2. Extracts the source MAC address and remembers which switch port it arrived on.
+3. Checks whether the frame contains an IPv4 payload.
+4. If the packet is IPv4, compares the source and destination IP addresses against the firewall policy.
+5. If the packet matches the blocked pair, installs a drop rule with higher priority and logs the event.
+6. If the packet is allowed, chooses the output port using the learned MAC table and installs a forwarding rule.
+7. Sends the current packet out through the selected port.
 
-The controller listens for switch connections and processes incoming packets.
+### ARP and non-IP traffic
+The firewall only blocks IPv4 traffic. ARP packets are still processed normally because they are required for address resolution before IP communication can happen. If ARP were blocked, the network would not be able to learn MAC addresses correctly.
 
----
+### Learning-switch behavior
+For permitted traffic, the controller behaves like a basic learning switch:
 
-### Step 2: Start Mininet (New Terminal)
-sudo mn -c  
-sudo mn --topo single,3 --controller=remote,ip=127.0.0.1,port=6633  
+- The source MAC address is learned on the ingress port
+- The destination MAC address is looked up in the table
+- Known destinations are forwarded to the correct port
+- Unknown destinations are flooded
+
+This keeps the network working normally for allowed traffic while still enforcing the block rule.
+
+## Flow Rule Logic
+Two classes of rules are installed in the switch.
+
+### Firewall rule
+
+- Priority: 100
+- Match: IPv4 traffic from 10.0.0.1 to 10.0.0.2
+- Action: drop
+
+### Forwarding rule
+
+- Priority: 10
+- Match: destination MAC address
+- Action: output to the learned switch port
+
+The high-priority firewall rule prevents the blocked flow from being forwarded by any lower-priority learning rule.
+
+## Installation
+
+### 1. Install dependencies
+
+```bash
+sudo apt update
+sudo apt install mininet openvswitch-switch git -y
+```
+
+### 2. Get POX
+
+If POX is not already available, clone it locally:
+
+```bash
+git clone https://github.com/noxrepo/pox.git
+```
+
+Place the firewall module in the POX root directory or make sure POX can import it when launched.
+
+## How to Run
+
+### 1. Start the controller
+
+From the POX directory:
+
+```bash
+./pox.py log.level --DEBUG firewall
+```
+
+This starts the controller, loads the firewall module, and begins listening for OpenFlow connections on port 6633.
+
+![Controller startup](screenshots/1.png)
+
+### 2. Start Mininet
+
+Open a second terminal and run:
+
+```bash
+sudo mn -c
+sudo mn --topo single,3 --controller=remote,ip=127.0.0.1,port=6633
+```
 
 This creates:
-- 3 hosts (h1, h2, h3)
-- 1 switch (s1)
-- Remote connection to the POX controller
 
----
+- 3 hosts: h1, h2, h3
+- 1 switch: s1
+- One remote controller connection to POX
 
-## 🔐 Firewall Policy
+![Mininet topology](screenshots/2.png)
 
-- Block: 10.0.0.1 → 10.0.0.2  
-- Allow: All other traffic  
+## Testing and Validation
 
----
+### Expected behavior during testing
+The firewall should show the following behavior during validation:
 
-## ⚙️ Working Principle
+- h1 to h2 is blocked
+- h1 to h3 is allowed
+- ARP still works normally
+- The controller prints a blocked-traffic log message
+- The switch flow table shows the drop rule and learned forwarding entries
 
-1. When a packet arrives at the switch:
-   - If no matching rule exists, it is sent to the controller (PacketIn event)
+### Allowed traffic test
 
-2. The controller:
-   - Extracts source and destination IP addresses
-   - Compares them with the firewall policy
+Run:
 
-3. Based on the decision:
-   - Blocked traffic → installs a drop rule (no action)
-   - Allowed traffic → installs a forwarding rule
+```bash
+mininet> h1 ping h3
+```
 
-4. After rule installation:
-   - Future packets are handled directly by the switch
-   - Controller load is reduced
+Expected result:
 
----
+- Ping succeeds
+- Packet loss is zero after the first rule installation
+- The controller only handles the first packet of the flow
 
-## 🔁 Flow Rule Design
+![Allowed traffic test](screenshots/2.png)
 
-Two types of flow rules are used:
+### Blocked traffic test
 
-Firewall Rule:
-- Priority: 100
-- Match: Source IP = 10.0.0.1, Destination IP = 10.0.0.2
-- Action: Drop
+Run:
 
-Forwarding Rule:
-- Priority: 10
-- Match: MAC/IP fields
-- Action: Forward to appropriate port
+```bash
+mininet> h1 ping h2
+```
 
-Higher priority ensures that firewall rules override normal forwarding rules.
+Expected result:
 
----
+- Ping fails
+- The packets from 10.0.0.1 to 10.0.0.2 are dropped
+- The controller logs the blocked IPv4 flow
 
-## 🧪 Testing
+![Blocked traffic test](screenshots/2.png)
 
-Allowed Traffic:  
-h1 ping h3  
-Result: Successful communication, no packet loss  
+### Throughput test
 
-Blocked Traffic:  
-h1 ping h2  
-Result: 100% packet loss, communication blocked  
+Run:
 
----
+```bash
+mininet> h1 iperf -s &
+mininet> h3 iperf -c h1
+```
 
-## 📊 Performance Analysis
+Expected result:
 
-Throughput Measurement:  
-h1 iperf -s &  
-h3 iperf -c h1  
+- Traffic between allowed hosts reaches the server normally
+- The switch forwards later packets directly after the rule is installed
+- The controller does not stay in the data path for every packet
 
-Observation:
-- High throughput for allowed traffic
-- Blocked traffic cannot establish connection
+![Throughput test](screenshots/3.png)
 
-Latency Measurement:  
-h1 ping h3  
+### Flow table inspection
 
-Observation:
-- Low latency after flow rules are installed
+Check the switch rules with:
 
-### Performance Explanation
-The first packet of any new flow is sent to the controller for processing. Once the controller installs the appropriate flow rule in the switch, subsequent packets are handled directly by the switch without involving the controller. This reduces delay, minimizes controller overhead, and results in improved throughput and lower latency for allowed traffic.
+```bash
+sudo ovs-ofctl dump-flows s1
+```
 
----
+Expected result:
 
-## 📋 Flow Table Verification
+- One high-priority drop rule for the blocked IPv4 pair
+- Lower-priority forwarding rules for allowed traffic
+- MAC-based forwarding entries learned by the controller
 
-sudo ovs-ofctl dump-flows s1  
+![Flow table dump](screenshots/4.png)
 
-Expected output includes:
-- High priority drop rule for blocked traffic
-- Forwarding rules for allowed traffic
+### Controller log verification
 
----
+When restricted traffic is detected, the controller prints a message like:
 
-## 📜 Controller Logs
+```text
+BLOCKED: 10.0.0.1 -> 10.0.0.2
+```
 
-Example:  
-BLOCKED: 10.0.0.1 -> 10.0.0.2  
+This confirms that the controller inspected the packet and enforced the firewall policy before forwarding it.
 
-This confirms that the firewall is actively monitoring and enforcing rules.
+![Controller log](screenshots/5.png)
 
----
+## What Each Screenshot Shows
 
-## 📊 Observations
+- screenshots/1.png: POX controller startup and OpenFlow listener initialization
+- screenshots/2.png: Mininet topology startup plus ping validation for allowed and blocked traffic
+- screenshots/3.png: iperf throughput test for permitted traffic
+- screenshots/4.png: OVS flow table showing learned forwarding and firewall rules
+- screenshots/5.png: Controller log message showing a blocked IPv4 flow
 
-- Flow rules are dynamically installed by the controller
-- The first packet is processed by the controller
-- Subsequent packets are handled by the switch
-- Firewall rules successfully block unauthorized communication
-- Allowed traffic is not affected
-- Network performance remains efficient
+## Performance Observation
+The first packet of a new flow is sent to the controller. After the controller installs the correct flow rule, the switch handles later packets directly. This reduces controller overhead and keeps allowed traffic efficient.
 
----
+In practice, this means:
 
-## 🧠 Concepts Demonstrated
+- Initial packets may take slightly longer because they trigger PacketIn handling
+- Later packets are forwarded by the switch without controller involvement
+- The blocked flow is dropped immediately after the firewall rule is installed
 
-- Software Defined Networking (SDN)
-- Separation of control plane and data plane
-- OpenFlow protocol
-- Match–Action flow rules
-- PacketIn and FlowMod handling
-- Centralized network control
+## Troubleshooting
 
----
+### POX warns about Python version
+The POX console may warn that it prefers Python 3.6 to 3.9 while the environment is running Python 3.12. In this project, the controller still runs and the firewall behavior works, but using a supported Python version is safer if you encounter instability.
 
-## 📁 Project Structure
+### Mininet cannot connect to the controller
+Check that POX is running before starting Mininet and that it is listening on port 6633.
 
-sdn-firewall/  
- ├── firewall.py  
- ├── README.md  
- └── screenshots/  
+### Old network state causes problems
+If Mininet behaves unexpectedly, clean up the environment first:
 
----
+```bash
+sudo mn -c
+```
 
-## ✅ Conclusion
+### No blocked log appears
+Make sure you are testing the correct flow, which is 10.0.0.1 to 10.0.0.2.
 
-This project demonstrates how SDN can be used to implement a flexible and efficient firewall. By centralizing control in the controller, network policies can be dynamically enforced without modifying individual devices.
+## Project Structure
 
-The implementation highlights the advantages of SDN, including programmability, scalability, and improved network security.
+```text
+firewall/
+├── firewall.py
+├── README.md
+└── screenshots/
+    ├── 1.png
+    ├── 2.png
+    ├── 3.png
+    ├── 4.png
+    └── 5.png
+```
 
----
+## Conclusion
+This project demonstrates how SDN can be used to implement a simple but effective firewall. The controller learns host locations, blocks a specific IPv4 communication pair, and installs OpenFlow rules dynamically so the switch can process later packets efficiently.
+
+The result is a compact example of centralized network policy enforcement using POX and Mininet.
