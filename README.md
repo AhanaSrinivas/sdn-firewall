@@ -43,6 +43,14 @@ The controller is implemented in [firewall.py](firewall.py). It follows two resp
 1. Learn the location of hosts by storing MAC-to-port mappings.
 2. Enforce the firewall rule before installing forwarding entries.
 
+### SDN control path
+The important OpenFlow idea behind the project is the packet-in / flow-install cycle:
+
+- The first packet of a new flow reaches the controller because the switch does not yet have a matching rule.
+- The controller inspects that packet and decides whether it should be allowed or dropped.
+- The controller then installs a flow entry so the switch can handle later packets locally.
+- This is the same general pattern used by many SDN controller apps, even though the exact API differs between frameworks.
+
 ### PacketIn handling
 PacketIn is the main event that drives the controller logic.
 
@@ -75,7 +83,7 @@ Two classes of rules are installed in the switch.
 ### Firewall rule
 
 - Priority: 100
-- Match: IPv4 traffic from 10.0.0.1 to 10.0.0.2
+- Match: Ethernet type IPv4 plus source IP 10.0.0.1 and destination IP 10.0.0.2
 - Action: drop
 
 ### Forwarding rule
