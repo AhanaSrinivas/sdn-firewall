@@ -249,6 +249,16 @@ In practice, this means:
 - Later packets are forwarded by the switch without controller involvement
 - The blocked flow is dropped immediately after the firewall rule is installed
 
+## Evaluation Notes
+This project is mainly demonstrated through functional behavior rather than numeric benchmarking.
+
+- Latency is demonstrated through ping output in the screenshots, including RTT values for allowed traffic and packet loss for blocked traffic.
+- Throughput is demonstrated through iperf output in the screenshots, showing the achieved transfer rate for allowed traffic.
+- The screenshots are used to prove controller startup, Mininet topology, flow table installation, blocked traffic logs, and allowed/blocked packet behavior.
+- There are no separate latency or throughput graphs/tables in the report, so if the examiner asks, explain the live Mininet outputs instead.
+
+If asked about the absence of latency or throughput figures, explain that the demo focuses on SDN control logic, firewall enforcement, and flow-rule behavior in Mininet, not on formal performance benchmarking.
+
 ## Troubleshooting
 
 ### POX warns about Python version
